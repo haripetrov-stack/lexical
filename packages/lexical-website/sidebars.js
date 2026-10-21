@@ -99,6 +99,7 @@ const sidebars = {
         'extensions/signals',
         'extensions/peer-dependencies',
         'extensions/included-extensions',
+        'extensions/block-ids',
         'extensions/design',
         'extensions/faq',
       ],

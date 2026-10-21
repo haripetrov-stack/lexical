@@ -8,6 +8,16 @@
 
 export {type AutoFocusConfig, AutoFocusExtension} from './AutoFocusExtension';
 export {
+  $defaultIsIdentifiedBlock,
+  $getBlockById,
+  $getBlockId,
+  type BlockIdConfig,
+  BlockIdExtension,
+  type BlockIdOutput,
+  blockIdState,
+  generateBlockId,
+} from './BlockIdExtension';
+export {
   type ClearEditorConfig,
   ClearEditorExtension,
   registerClearEditor,
