@@ -64,6 +64,9 @@ function readsOtherwiseBesideEdge(
   );
 }
 
+/** The markers whose runs CommonMark and GFM define. */
+const SPEC_MARKERS = '*_~';
+
 const delimitersByIndex = new WeakMap<TextFormatTransformersIndex, string>();
 
 /** The characters that start a code span or a format's tag. */
@@ -84,8 +87,10 @@ function getDelimiters(index: TextFormatTransformersIndex): string {
  * What a delimiter run cut at `index` of `text` sees beyond its far end once
  * the text is split there: before the run that starts at `index` when `step`
  * is -1, after the run that ends there when it is 1. `outside` is what lies
- * beyond the text. Beside a text match, which is written in a syntax of its
- * own, a run that the cut does not go through sees the edge of a line.
+ * beyond the text. When `readsLineEdge`, a run that the cut does not go
+ * through sees the edge of a line: beside a text match, which is written in a
+ * syntax of its own, and inside a format, for a marker that CommonMark and GFM
+ * do not define, which reads the format's content as a line of its own.
  */
 function characterBeyondRun(
   text: string,
@@ -93,7 +98,7 @@ function characterBeyondRun(
   step: 1 | -1,
   outside: string | undefined,
   delimiters: string,
-  isBesideTextMatch = false,
+  readsLineEdge = false,
 ): string | undefined {
   // Only a delimiter's run is walked: beside anything else, what lies beyond
   // is never read, and a long run of it would be walked at every cut.
@@ -102,7 +107,7 @@ function characterBeyondRun(
     beside !== undefined && delimiters.includes(beside)
       ? getDelimiterRunEdge(text, index, step)
       : index;
-  if (isBesideTextMatch && edge === index) {
+  if (readsLineEdge && edge === index) {
     return undefined;
   }
   return step === 1
@@ -406,6 +411,7 @@ function importOutermost(
               1,
               after,
               delimiters,
+              !SPEC_MARKERS.includes(text[endIndex - tagLength - 1]),
             ),
         before: isCodeSpan
           ? undefined
@@ -415,6 +421,7 @@ function importOutermost(
               -1,
               before,
               delimiters,
+              !SPEC_MARKERS.includes(text[startIndex + tagLength]),
             ),
         node: result.transformedNode,
       },

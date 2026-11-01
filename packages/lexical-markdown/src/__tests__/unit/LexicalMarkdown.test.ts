@@ -6004,6 +6004,32 @@ describe('emphasis next to Unicode punctuation and symbols', () => {
 
   it.each<[string, [string, number][]]>([
     [
+      '**==`====**',
+      [
+        ['`', TEXT_TYPE_TO_FORMAT.bold | TEXT_TYPE_TO_FORMAT.highlight],
+        ['==', TEXT_TYPE_TO_FORMAT.bold],
+      ],
+    ],
+    ['**~~`~~~~**', [['~~`~~~~', TEXT_TYPE_TO_FORMAT.bold]]],
+  ])(
+    "reads a highlight inside a format as a line of its own, and GFM's markers as GFM does, in %j",
+    (markdown, runs) => {
+      const editor = createTestEditor();
+      editor.update(() => $convertFromMarkdownString(markdown, TRANSFORMERS), {
+        discrete: true,
+      });
+      expect(
+        editor.read('latest', () =>
+          $getRoot()
+            .getAllTextNodes()
+            .map(node => [node.getTextContent(), node.getFormat()]),
+        ),
+      ).toEqual(runs);
+    },
+  );
+
+  it.each<[string, [string, number][]]>([
+    [
       'x\\``bb`x',
       [
         ['x`', 0],
