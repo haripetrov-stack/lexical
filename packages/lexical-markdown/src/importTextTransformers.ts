@@ -45,19 +45,22 @@ export function canContainTransformableMarkdown(
 }
 
 /**
- * Whether the delimiter run that starts `text` opens beside the edge of a
- * line but not beside `before`.
+ * Whether the delimiter run that starts `text` can open or close otherwise
+ * beside the edge of a line than beside `before`. Whether it can close
+ * matters even with nothing before it, through the rule of 3.
  */
-function opensOnlyBesideEdge(
+function readsOtherwiseBesideEdge(
   text: string,
   before: string | undefined,
   outside: string | undefined,
 ): boolean {
   const edge = getDelimiterRunEdge(text, 1, 1);
   const after = edge < text.length ? characterAt(text, edge) : outside;
+  const atEdge = getEmphasisSides(text[0], undefined, after);
+  const besideBefore = getEmphasisSides(text[0], before, after);
   return (
-    getEmphasisSides(text[0], undefined, after).canOpen &&
-    !getEmphasisSides(text[0], before, after).canOpen
+    atEdge.canOpen !== besideBefore.canOpen ||
+    atEdge.canClose !== besideBefore.canClose
   );
 }
 
@@ -347,9 +350,8 @@ function importOutermost(
       isTextMatch,
     );
     // The scan read a run at the start of the rest beside the end of the
-    // match. Read beside the edge of a line instead, it can only differ in
-    // whether it opens, since it has nothing before it in the rest to close,
-    // and then only in the pair it opens.
+    // match. Read beside the edge of a line instead, it can only change the
+    // pair it opens, since it has nothing before it in the rest to close.
     let isReusable = advanceFormatScan(
       formats,
       formats.offset + endIndex,
@@ -360,7 +362,7 @@ function importOutermost(
       isTextMatch &&
       restBefore === undefined &&
       formats.delimiters.has(rest[0]) &&
-      opensOnlyBesideEdge(rest, characterBefore(text, endIndex), after)
+      readsOtherwiseBesideEdge(rest, characterBefore(text, endIndex), after)
     ) {
       isReusable = findPairAtEdge(
         formats,

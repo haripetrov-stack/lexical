@@ -5507,6 +5507,11 @@ describe('emphasis next to Unicode punctuation and symbols', () => {
     ['after', 'user:bob**(admin)**', ['(admin)', 1]],
     ['before', '**(admin)**user:bob', ['(admin)', 1]],
     ['in italic after', 'user:bob*\u201ca\u201d*', ['\u201ca\u201d', 2]],
+    [
+      'far after',
+      'user:bob**(' + 'x '.repeat(40) + 'y)**',
+      ['(' + 'x '.repeat(40) + 'y)', 1],
+    ],
   ] as const)(
     'reads formatting %s a text match whose syntax has a letter beside it',
     (_where, markdown, formatted) => {
@@ -5542,6 +5547,41 @@ describe('emphasis next to Unicode punctuation and symbols', () => {
       expect(
         editor.read('latest', () => $convertToMarkdownString(transformers)),
       ).toBe(markdown);
+    },
+  );
+
+  it.each([
+    ['a short run', '#'],
+    ['a long run', '#' + 'x'.repeat(80)],
+  ])(
+    'reads a run after a link the same whatever follows it on the line, with %s',
+    (_name, inner) => {
+      // As on main, the run reads the link's end as the edge of a line, so
+      // it opens without closing, and the rule of 3 does not keep `*` from
+      // closing it.
+      const editor = createTestEditor();
+      for (const tail of ['', ' [b](v)', ' ' + 'y'.repeat(80)]) {
+        editor.update(
+          () =>
+            $convertFromMarkdownString(
+              `[a](u)**${inner}*${tail}`,
+              TRANSFORMERS,
+            ),
+          {discrete: true},
+        );
+        expect(
+          editor.read('latest', () =>
+            $getRoot()
+              .getAllTextNodes()
+              .slice(0, 3)
+              .map(node => [node.getTextContent(), node.getFormat()]),
+          ),
+        ).toEqual([
+          ['a', 0],
+          ['*', 0],
+          [inner, TEXT_TYPE_TO_FORMAT.italic],
+        ]);
+      }
     },
   );
 
