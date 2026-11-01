@@ -5585,6 +5585,31 @@ describe('emphasis next to Unicode punctuation and symbols', () => {
     },
   );
 
+  it('gives a text match found earlier in the line its named groups where they are', () => {
+    const ranges: string[] = [];
+    const MENTION: TextMatchTransformer = {
+      dependencies: [],
+      importRegExp: new RegExp('@(?<name>\\w+)', 'd'),
+      regExp: new RegExp('@(?<name>\\w+)$', 'd'),
+      replace: (textNode, match) => {
+        const {indices, input = ''} = match;
+        const name = indices?.groups?.name;
+        assert(name !== undefined && indices?.[1] !== undefined);
+        const [start, end] = name;
+        ranges.push(input.slice(start, end), input.slice(...indices[1]));
+        textNode.setTextContent(input.slice(start, end));
+      },
+      type: 'text-match',
+    };
+    const editor = createTestEditor();
+    editor.update(
+      () =>
+        $convertFromMarkdownString('**a** @bob', [MENTION, ...TRANSFORMERS]),
+      {discrete: true},
+    );
+    expect(ranges).toEqual(['bob', 'bob']);
+  });
+
   it("writes no reference for the `.` of `www.` that is a format's marker", () => {
     const DOT: TextFormatTransformer = {
       format: ['italic'],

@@ -39,7 +39,17 @@ function moveMatch(
           range[1] - distance,
         ],
     ) as RegExpIndicesArray;
-    indices.groups = match.indices.groups;
+    const {groups} = match.indices;
+    if (groups) {
+      // Each named group's range is the one of its numbered group.
+      const ranges: Record<string, [number, number] | undefined> =
+        Object.create(null);
+      for (const name in groups) {
+        const range = groups[name];
+        ranges[name] = range && indices[match.indices.indexOf(range)];
+      }
+      indices.groups = ranges as typeof groups;
+    }
     moved.indices = indices;
   }
   return moved;
