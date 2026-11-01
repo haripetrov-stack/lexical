@@ -320,6 +320,17 @@ const keepOwners = new WeakMap<
   {external: boolean; owners: Set<object>}
 >();
 
+/**
+ * The items bindings kept again after their UndoManager let them go (a clear
+ * of a stack releases what its steps kept, parents included), with the
+ * binding lifetimes (the owners in keepOwners) that hold each such keep: the
+ * lifetimes that kept it again, or relied on it when another had, or held
+ * it when the last of those stopped. The keep is released when the last of
+ * them stops. And per lifetime, the items it holds so.
+ */
+const rekeepHolders = new WeakMap<Item, Set<object>>();
+const rekeptByOwner = new WeakMap<object, Set<Item>>();
+
 /** What an update listener gets for a commit (see YBinding#onUpdate). */
 type UpdatePayload = {
   dirtyElements: Map<NodeKey, boolean>;
@@ -1144,6 +1155,44 @@ export class YBinding {
       // This listening lifetime: a binding started again after a dispose
       // owns its keeps anew, apart from a release the old one queued.
       const owner = {};
+      const rekept = new Set<Item>();
+      rekeptByOwner.set(owner, rekept);
+      const hold = (it: Item, by: object) => {
+        let holders = rekeepHolders.get(it);
+        if (holders === undefined) {
+          holders = new Set();
+          rekeepHolders.set(it, holders);
+        }
+        holders.add(by);
+        const theirs = rekeptByOwner.get(by);
+        if (theirs !== undefined) {
+          theirs.add(it);
+        }
+      };
+      // When this lifetime ends: each keep it holds goes to the other
+      // lifetimes that hold it, or that keep the item for a step of theirs,
+      // or is released by the last of them.
+      const releaseRekept = () => {
+        for (const it of rekept) {
+          const holders = rekeepHolders.get(it);
+          if (holders !== undefined) {
+            holders.delete(owner);
+            if (holders.size > 0) {
+              continue;
+            }
+            rekeepHolders.delete(it);
+          }
+          const entry = keepOwners.get(it);
+          if (entry !== undefined && entry.owners.size > 0) {
+            for (const other of entry.owners) {
+              hold(it, other);
+            }
+            continue;
+          }
+          it.keep = false;
+        }
+        rekept.clear();
+      };
       const keep = (item: Item | null) => {
         for (let it = item; it !== null; it = (it.parent as YNode)._item) {
           let entry = keepOwners.get(it);
@@ -1186,15 +1235,27 @@ export class YBinding {
               continue;
             }
           }
+          // A keep this lifetime set again after a clear goes with it; one
+          // another lifetime holds stays.
+          const holders = rekeepHolders.get(it);
+          if (holders !== undefined) {
+            holders.delete(owner);
+            rekept.delete(it);
+            if (holders.size > 0) {
+              continue;
+            }
+            rekeepHolders.delete(it);
+          }
           it.keep = false;
         }
         kept.clear();
         if (disposed) {
           this._doc.off('destroy', onDestroy);
+          releaseRekept();
         }
       };
       const release = (onlyWhenEmpty: boolean) => {
-        if (kept.size === 0) {
+        if (kept.size === 0 && (!disposed || rekept.size === 0)) {
           if (disposed) {
             this._doc.off('destroy', onDestroy);
           }
@@ -1232,10 +1293,16 @@ export class YBinding {
         releaseWhenEmpty();
         // A clear of one stack makes the UndoManager release what that
         // stack's steps kept, parents included: keep what this binding
-        // still relies on.
+        // still relies on (another UndoManager on the document may rely on
+        // it too: Yjs's keep is one flag). Released when this binding stops
+        // (see releaseRekept), not before.
         for (const it of kept) {
           if (!it.keep) {
             it.keep = true;
+            hold(it, owner);
+          } else if (rekeepHolders.has(it)) {
+            // Kept again by another binding: held by this one too.
+            hold(it, owner);
           }
         }
       });
