@@ -2456,10 +2456,10 @@ export class Writer {
    * write computes the format items it writes from the formats it starts
    * from; from the start of a unit after a deleted block node (inside a
    * format run around that node), a delete, which then removed the format
-   * items it found redundant (see Cursor#collapseGap), removed the opener
-   * of a run that goes on after the deleted content, and every reader
-   * showed that text without the format while the author kept it (also on
-   * a follow-up's delete).
+   * items it found redundant (before deletes kept them, see Cursor#delete),
+   * removed the opener of a run that goes on after the deleted content, and
+   * every reader showed that text without the format while the author
+   * kept it (also on a follow-up's delete).
    */
   private $deleteUnit(old: Unit[], idx: number): void {
     const u = old[idx];
@@ -2956,7 +2956,10 @@ export class Writer {
 
   /** Rewrite one line (its content and marker) on its own. */
   $writeLineAlone(u: Unit, d: Desired): void {
-    if (this.$writeTextEdit(u, d)) {
+    // A rewrite after a failed write diffs the line against the document:
+    // the edits Lexical recorded may be stored already (the failed write
+    // stored part of its change), and writing them again would repeat them.
+    if (!this.rewriteAll && this.$writeTextEdit(u, d)) {
       return;
     }
     const old = u.cs.units;
