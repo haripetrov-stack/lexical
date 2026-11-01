@@ -140,13 +140,14 @@ export function advanceFormatScan(
 
 /**
  * Lets `scan`, moved on to `rest` by {@link advanceFormatScan}, read the
- * delimiter run that starts `rest` beside the edge of a line, where it opens,
- * rather than beside what came before, where it did not. Nothing in `rest`
- * comes before the run, so the rest reads the same either way but for the
- * pair the run opens, which nothing in `rest` can hold. That pair is found in
- * ever longer prefixes of `rest`, so that finding it costs about as much as
- * the text it holds. Returns false when no prefix short of the whole of
- * `rest` holds it, and the rest has to be scanned again.
+ * delimiter run that starts `rest` beside the edge of a line rather than
+ * beside what came before, where it opened or closed otherwise. Nothing in
+ * `rest` comes before the run, so the rest reads the same either way but for
+ * the pair the run opens, which nothing in `rest` can hold, and whatever
+ * pairs across its end, which `advanceFormatScan` turns down there. That
+ * pair is found in ever longer prefixes of `rest`, so that finding it costs
+ * about as much as the text it holds. Returns false when no prefix short of
+ * the whole of `rest` holds it, and the rest has to be scanned again.
  */
 export function findPairAtEdge(
   scan: FormatScan,
