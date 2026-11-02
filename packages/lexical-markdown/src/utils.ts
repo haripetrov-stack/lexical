@@ -70,34 +70,13 @@ const WHITESPACE_CLASS = 0;
 const PUNCTUATION_CLASS = 1;
 const OTHER_CLASS = 2;
 
-function classifyByCategory(character: string): number {
-  return WHITESPACE.test(character)
+/** How flanking sees `character`; the edge of the line is whitespace. */
+function classify(character: string | undefined): number {
+  return character === undefined || WHITESPACE.test(character)
     ? WHITESPACE_CLASS
     : PUNCTUATION.test(character)
       ? PUNCTUATION_CLASS
       : OTHER_CLASS;
-}
-
-// ASCII classes, filled from the categories on first use so that the common
-// case needs no regular expression.
-let asciiClasses: Uint8Array | undefined;
-
-/** How flanking sees `character`; the edge of the line is whitespace. */
-function classify(character: string | undefined): number {
-  if (character === undefined) {
-    return WHITESPACE_CLASS;
-  }
-  const code = character.charCodeAt(0);
-  if (code >= 0x80) {
-    return classifyByCategory(character);
-  }
-  if (asciiClasses === undefined) {
-    asciiClasses = new Uint8Array(0x80);
-    for (let c = 0; c < 0x80; c++) {
-      asciiClasses[c] = classifyByCategory(String.fromCharCode(c));
-    }
-  }
-  return asciiClasses[code];
 }
 
 /**
