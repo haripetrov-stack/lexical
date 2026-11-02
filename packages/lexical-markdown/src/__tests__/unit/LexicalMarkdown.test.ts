@@ -5985,6 +5985,23 @@ describe('emphasis next to Unicode punctuation and symbols', () => {
     ],
     ['**~~**a', [['**~~**a', 0]]],
     ['~~a*~~b', [['~~a*~~b', 0]]],
+    [
+      '[a](u)*`c`)**',
+      [
+        ['a', 0],
+        ['*', 0],
+        ['c', TEXT_TYPE_TO_FORMAT.code],
+        [')**', 0],
+      ],
+    ],
+    [
+      '**)*(.`*b!****_',
+      [
+        [')', TEXT_TYPE_TO_FORMAT.bold],
+        ['(.`b!', TEXT_TYPE_TO_FORMAT.bold | TEXT_TYPE_TO_FORMAT.italic],
+        ['_', 0],
+      ],
+    ],
   ])(
     'reads a run beside another marker as CommonMark does in %j',
     (markdown, runs) => {

@@ -144,38 +144,38 @@ export function advanceFormatScan(
  * beside what came before, where it opened or closed otherwise. Nothing in
  * `rest` comes before the run, so the rest reads the same either way but for
  * the pair the run opens, which nothing in `rest` can hold, and whatever
- * pairs across its end, which `advanceFormatScan` turns down there. That
- * pair is found in ever longer prefixes of `rest`, so that finding it costs
- * about as much as the text it holds. Returns false when no prefix short of
- * the whole of `rest` holds it, and the rest has to be scanned again.
+ * pairs across its end, which `advanceFormatScan` turns down there. The pair
+ * ends before the next format that the scan found, which is imported first
+ * as it would be with the match before it, and it is found in ever longer
+ * prefixes of `rest`, so that finding it costs about as much as the text it
+ * holds. Returns false when the rest has to be scanned again.
  */
 export function findPairAtEdge(
   scan: FormatScan,
   rest: string,
   textFormatTransformersIndex: TextFormatTransformersIndex,
-  after: string | undefined,
 ): boolean {
-  const {codeSpans, offset} = scan;
-  let span = scan.nextCodeSpan;
-  for (let length = 64; length < rest.length; length *= 2) {
-    // Cut neither a code span nor a run of a delimiter or backtick.
-    while (
-      span < codeSpans.length &&
-      codeSpans[span].endIndex <= offset + length
-    ) {
-      span++;
-    }
+  const {offset} = scan;
+  const span = scan.codeSpans[scan.nextCodeSpan];
+  const next = scan.emphasis[scan.nextEmphasis];
+  const end = Math.min(
+    rest.length,
+    span ? span.startIndex - offset : Infinity,
+    next ? next.startIndex - offset : Infinity,
+  );
+  for (let length = 64; ; length *= 2) {
+    // Cut no run of a delimiter or backtick; no code span starts before `end`.
     if (
-      span < codeSpans.length &&
-      codeSpans[span].startIndex < offset + length
+      length < end &&
+      (rest[length - 1] === '`' || scan.delimiters.has(rest[length - 1]))
     ) {
-      length = codeSpans[span].endIndex - offset;
-    }
-    if (rest[length - 1] === '`' || scan.delimiters.has(rest[length - 1])) {
       length = getDelimiterRunEdge(rest, length, 1);
     }
-    if (length >= rest.length) {
-      break;
+    if (length >= end) {
+      if (end === rest.length) {
+        return false;
+      }
+      length = end;
     }
     const pair = scanTextFormats(
       rest.slice(0, length),
@@ -191,8 +191,10 @@ export function findPairAtEdge(
       };
       return true;
     }
+    if (length === end) {
+      return true;
+    }
   }
-  return false;
 }
 
 /**

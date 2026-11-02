@@ -87,10 +87,8 @@ function getDelimiters(index: TextFormatTransformersIndex): string {
  * What a delimiter run cut at `index` of `text` sees beyond its far end once
  * the text is split there: before the run that starts at `index` when `step`
  * is -1, after the run that ends there when it is 1. `outside` is what lies
- * beyond the text. When `readsLineEdge`, a run that the cut does not go
- * through sees the edge of a line: beside a text match, which is written in a
- * syntax of its own, and inside a format, for a marker that CommonMark and GFM
- * do not define, which reads the format's content as a line of its own.
+ * beyond the text. Beside a text match, which is written in a syntax of its
+ * own, a run that the cut does not go through sees the edge of a line.
  */
 function characterBeyondRun(
   text: string,
@@ -98,7 +96,7 @@ function characterBeyondRun(
   step: 1 | -1,
   outside: string | undefined,
   delimiters: string,
-  readsLineEdge = false,
+  isBesideTextMatch = false,
 ): string | undefined {
   // Only a delimiter's run is walked: beside anything else, what lies beyond
   // is never read, and a long run of it would be walked at every cut.
@@ -107,7 +105,7 @@ function characterBeyondRun(
     beside !== undefined && delimiters.includes(beside)
       ? getDelimiterRunEdge(text, index, step)
       : index;
-  if (readsLineEdge && edge === index) {
+  if (isBesideTextMatch && edge === index) {
     return undefined;
   }
   return step === 1
@@ -369,12 +367,7 @@ function importOutermost(
       formats.delimiters.has(rest[0]) &&
       readsOtherwiseBesideEdge(rest, characterBefore(text, endIndex), after)
     ) {
-      isReusable = findPairAtEdge(
-        formats,
-        rest,
-        textFormatTransformersIndex,
-        after,
-      );
+      isReusable = findPairAtEdge(formats, rest, textFormatTransformersIndex);
     }
     scan.rest = rest;
     return {
@@ -394,35 +387,24 @@ function importOutermost(
       foundTextFormat.match,
     );
     const {startIndex, endIndex, isCodeSpan} = foundTextFormat;
-    const tagLength = foundTextFormat.match[1].length;
-    // A code span's fence is not its tag's length, and its content is not
-    // read for emphasis against what lies outside it.
+    const tag = foundTextFormat.match[1];
+    // The content reads a run at its edge beside the tag, so that it flanks
+    // as it does in the line, when it is of a marker that CommonMark or GFM
+    // define and the tag does not cut it; otherwise beside the edge of a
+    // line, as the rule of 3 would measure a cut run without the part the
+    // tag took. A code span's content is not read for emphasis.
+    const beside = (char: string) =>
+      !isCodeSpan && SPEC_MARKERS.includes(char) && char !== tag[0]
+        ? tag[0]
+        : undefined;
     return importAround(
       result,
       null,
       startIndex,
       endIndex,
       {
-        after: isCodeSpan
-          ? undefined
-          : characterBeyondRun(
-              text,
-              endIndex - tagLength,
-              1,
-              after,
-              delimiters,
-              !SPEC_MARKERS.includes(text[endIndex - tagLength - 1]),
-            ),
-        before: isCodeSpan
-          ? undefined
-          : characterBeyondRun(
-              text,
-              startIndex + tagLength,
-              -1,
-              before,
-              delimiters,
-              !SPEC_MARKERS.includes(text[startIndex + tagLength]),
-            ),
+        after: beside(text[endIndex - tag.length - 1]),
+        before: beside(text[startIndex + tag.length]),
         node: result.transformedNode,
       },
       undefined,
