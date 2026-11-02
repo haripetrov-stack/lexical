@@ -67,22 +67,6 @@ function readsOtherwiseBesideEdge(
 /** The markers whose runs CommonMark and GFM define. */
 const SPEC_MARKERS = '*_~';
 
-const delimitersByIndex = new WeakMap<TextFormatTransformersIndex, string>();
-
-/** The characters that start a code span or a format's tag. */
-function getDelimiters(index: TextFormatTransformersIndex): string {
-  let delimiters = delimitersByIndex.get(index);
-  if (delimiters === undefined) {
-    delimiters =
-      '`' +
-      Object.keys(index.transformersByTag)
-        .map(tag => tag[0])
-        .join('');
-    delimitersByIndex.set(index, delimiters);
-  }
-  return delimiters;
-}
-
 /**
  * What a delimiter run cut at `index` of `text` sees beyond its far end once
  * the text is split there: before the run that starts at `index` when `step`
@@ -95,14 +79,14 @@ function characterBeyondRun(
   index: number,
   step: 1 | -1,
   outside: string | undefined,
-  delimiters: string,
+  delimiters: Set<string>,
   isBesideTextMatch = false,
 ): string | undefined {
   // Only a delimiter's run is walked: beside anything else, what lies beyond
   // is never read, and a long run of it would be walked at every cut.
   const beside = text[step === 1 ? index - 1 : index];
   const edge =
-    beside !== undefined && delimiters.includes(beside)
+    beside === '`' || delimiters.has(beside)
       ? getDelimiterRunEdge(text, index, step)
       : index;
   if (isBesideTextMatch && edge === index) {
@@ -243,7 +227,7 @@ function importOutermost(
           rest: text,
         };
   const {formats} = scan;
-  const delimiters = getDelimiters(textFormatTransformersIndex);
+  const {delimiters} = formats;
   let foundTextFormat = findOutermostTextFormatTransformer(
     text,
     textFormatTransformersIndex,
@@ -364,7 +348,7 @@ function importOutermost(
       isReusable &&
       isTextMatch &&
       restBefore === undefined &&
-      formats.delimiters.has(rest[0]) &&
+      delimiters.has(rest[0]) &&
       readsOtherwiseBesideEdge(rest, characterBefore(text, endIndex), after)
     ) {
       isReusable = findPairAtEdge(formats, rest, textFormatTransformersIndex);

@@ -14,30 +14,20 @@ import {isEscaped} from './utils';
 
 /**
  * A copy of `match` for `text`, which is what is left of the text it was
- * found in after `distance` characters, less the first `cut` characters of
- * the match and of its first group, which starts with it.
+ * found in after `distance` characters.
  */
 function moveMatch(
   match: RegExpExecArray,
   text: string,
   distance: number,
-  cut = 0,
 ): RegExpExecArray {
   const moved = [...match] as RegExpExecArray;
-  moved.index = match.index - distance + cut;
+  moved.index = match.index - distance;
   moved.input = text;
   moved.groups = match.groups;
-  if (cut > 0) {
-    moved[0] = match[0].slice(cut);
-    moved[1] = match[1].slice(cut);
-  }
   if (match.indices) {
     const indices = match.indices.map(
-      (range, group) =>
-        range && [
-          range[0] - distance + (group < 2 ? cut : 0),
-          range[1] - distance,
-        ],
+      range => range && [range[0] - distance, range[1] - distance],
     ) as RegExpIndicesArray;
     const {groups} = match.indices;
     if (groups) {
@@ -60,16 +50,15 @@ export type CodeSpans = readonly {startIndex: number; endIndex: number}[];
 
 /**
  * The first link in `text`, starting at the `[` that really opens its text,
- * with none of its syntax inside a code span, and up to where a search would
- * find it. `codeSpans` are those of the text that `text` is what is left of
- * after `offset`, when they are known.
+ * with none of its syntax inside a code span. `codeSpans` are those of the
+ * text that `text` is what is left of after `offset`, when they are known.
  */
 function matchLink(
   text: string,
   regExp: RegExp,
   codeSpans: CodeSpans | undefined,
   offset: number,
-): [match: RegExpExecArray, found: number] | null {
+): RegExpExecArray | null {
   const search = new RegExp(
     regExp.source,
     regExp.flags.replace(/[gy]/g, '') + 'g',
@@ -126,21 +115,16 @@ function matchLink(
       continue;
     }
     // A `[` that the label holds outside a code span is the link's real
-    // opener, and what comes before it is ordinary text, so the match starts
-    // there. A search from any `[` up to the real opener finds the same link.
-    // A link with an empty label, as in `x[[](u)`, stays text, as `[](u)`
-    // does, so the search goes on from the opener.
+    // opener, and what comes before it is ordinary text, so the search goes
+    // on from there, where it finds the same link. A link with an empty
+    // label, as in `x[[](u)`, stays text, as `[](u)` does.
     const opener = getLinkLabelOpener(match[1]);
     if (opener !== null && opener >= 0) {
-      if (opener + 1 < match[1].length) {
-        const inner = moveMatch(match, text, 0, opener + 1);
-        return [inner, inner.index];
-      }
       search.lastIndex = match.index + 1 + opener;
       continue;
     }
     if (!isEscaped(text, match.index)) {
-      return [match, match.index];
+      return match;
     }
     // The label of an escaped `[` holds no opener, so each escaped `[` up to
     // the next one written as is finds what the last of them finds: that
@@ -191,15 +175,14 @@ function looksOnlyAhead(regExp: RegExp): boolean {
 }
 
 /**
- * The match each text-match transformer found in a text, where its search
- * found it and the offset of the text it was found in, or `null` when there
- * is none. Kept for the built-in link syntax and for patterns that only look
+ * The match each text-match transformer found in a text and the offset of
+ * the text it was found in, or `null` when there is none. Kept for the built-in link syntax and for patterns that only look
  * ahead, for which it is still the first match in what is left of the text
  * after any offset up to where it was found.
  */
 export type TextMatches = Map<
   TextMatchTransformer,
-  {found: number; match: RegExpExecArray; offset: number} | null
+  {match: RegExpExecArray; offset: number} | null
 >;
 
 export function findOutermostTextMatchTransformer(
@@ -238,19 +221,15 @@ export function findOutermostTextMatchTransformer(
     let match: RegExpMatchArray | null;
     if (isLink || looksOnlyAhead(importRegExp)) {
       const found = matches.get(transformer);
-      if (found === undefined || (found !== null && found.found < offset)) {
-        let result: [RegExpExecArray, number] | null;
-        if (isLink) {
-          result = matchLink(text, importRegExp, codeSpans, offset);
-        } else {
-          const exec = importRegExp.exec(text);
-          result = exec && [exec, exec.index];
-        }
-        matches.set(
-          transformer,
-          result && {found: offset + result[1], match: result[0], offset},
-        );
-        match = result && result[0];
+      if (
+        found === undefined ||
+        (found !== null && found.offset + found.match.index < offset)
+      ) {
+        const result = isLink
+          ? matchLink(text, importRegExp, codeSpans, offset)
+          : importRegExp.exec(text);
+        matches.set(transformer, result && {match: result, offset});
+        match = result;
       } else {
         match = found && moveMatch(found.match, text, offset - found.offset);
       }

@@ -178,20 +178,10 @@ export function isLetterForSomeReader(character: string): boolean {
   );
 }
 
-function isHighSurrogate(code: number): boolean {
-  return code >= 0xd800 && code <= 0xdbff;
-}
-
-function isLowSurrogate(code: number): boolean {
-  return code >= 0xdc00 && code <= 0xdfff;
-}
-
 /** The character (code point) that starts at `index`, if any. */
 export function characterAt(text: string, index: number): string | undefined {
-  return isHighSurrogate(text.charCodeAt(index)) &&
-    isLowSurrogate(text.charCodeAt(index + 1))
-    ? text.slice(index, index + 2)
-    : text[index];
+  const code = text.codePointAt(index);
+  return code === undefined ? undefined : String.fromCodePoint(code);
 }
 
 /** The character (code point) that ends just before `index`, if any. */
@@ -199,10 +189,8 @@ export function characterBefore(
   text: string,
   index: number,
 ): string | undefined {
-  return isLowSurrogate(text.charCodeAt(index - 1)) &&
-    isHighSurrogate(text.charCodeAt(index - 2))
-    ? text.slice(index - 2, index)
-    : text[index - 1];
+  const pair = characterAt(text, index - 2);
+  return pair !== undefined && pair.length === 2 ? pair : text[index - 1];
 }
 
 export function toCharacterReference(character: string): string {

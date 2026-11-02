@@ -771,19 +771,20 @@ function isReferenceable(character: string | undefined): boolean {
   );
 }
 
-/** Adjacent markers, between the pieces at `before` and `after`. */
-interface MarkerRun {
-  before: number;
-  after: number;
-  /** Whether the first delimiter run opens a tag. */
-  opens: boolean;
-  /** Whether the last delimiter run closes a tag. */
-  closes: boolean;
-  /** The marker character after the first delimiter run, if any. */
-  afterFirst: string | undefined;
-  /** The marker character before the last delimiter run, if any. */
-  beforeLast: string | undefined;
-}
+/**
+ * Adjacent markers between the pieces at `before` and `after`: whether the
+ * first delimiter run opens a tag, the marker character after it within the
+ * markers (if any), whether the last delimiter run closes a tag, and the
+ * marker character before it.
+ */
+type MarkerRun = [
+  before: number,
+  after: number,
+  opens: boolean,
+  afterFirst: string | undefined,
+  closes: boolean,
+  beforeLast: string | undefined,
+];
 
 /**
  * Joins exported pieces into Markdown. A delimiter run between a word
@@ -793,73 +794,52 @@ interface MarkerRun {
  * reference instead, whose `&` or `;` is punctuation: `&#97;**\***`.
  */
 function joinPieces({kinds, values}: MarkdownPieces): string {
+  const text = values.join('');
   if (kinds.every(kind => kind === TEXT)) {
-    return values.join('');
+    return text;
   }
-  const {encodeStart, encodeEnd} = decideReferences(kinds, values);
-  const count = kinds.length;
-  // How many code units of each piece go out as a reference at its start
-  // and at its end, and whether the backslash before the end does.
-  const startLengths = new Uint8Array(count);
-  const endLengths = new Uint8Array(count);
-  const escapesEnd = new Uint8Array(count);
-  for (let index = 0; index < count; index++) {
+  const [encodeStart, encodeEnd] = decideReferences(kinds, values);
+  // The code units of `text` that go out as references.
+  const isReference = new Uint8Array(text.length);
+  for (let index = 0, base = 0; index < kinds.length; index++) {
     const value = values[index];
-    if (encodeStart[index]) {
-      startLengths[index] = characterAt(value, 0)!.length;
-    }
-    if (encodeEnd[index] && value.length > startLengths[index]) {
-      endLengths[index] = characterBefore(value, value.length)!.length;
+    const start = encodeStart[index] ? characterAt(value, 0)!.length : 0;
+    let end = value.length;
+    if (encodeEnd[index] && end > start) {
+      end -= characterBefore(value, end)!.length;
     }
     // A backslash left unescaped (when preserving newlines, or in decorator
     // text) would escape the reference, marker or raw punctuation written
     // after it, or end the line with a hard break.
-    const bodyEnd = value.length - endLengths[index];
-    escapesEnd[index] = Number(
+    if (
       kinds[index] === TEXT &&
-        (isMarker(kinds[index + 1]) ||
-          (kinds[index + 1] === RAW && ESCAPABLE.test(values[index + 1]))) &&
-        bodyEnd > startLengths[index] &&
-        isEscaped(value, bodyEnd),
-    );
-  }
-  const spoiled = findSpoiledLinks(kinds, values, (index, mark) => {
-    mark(0, startLengths[index]);
-    const end = values[index].length - endLengths[index];
-    mark(end - escapesEnd[index], values[index].length);
-  });
-  let markdown = '';
-  let next = 0;
-  for (let index = 0, base = 0; index < count; index++) {
-    const value = values[index];
-    const end = value.length - endLengths[index] - escapesEnd[index];
-    let from = startLengths[index];
-    markdown += toReferences(value.slice(0, from));
-    for (
-      ;
-      next < spoiled.length && spoiled[next] < base + value.length;
-      next++
+      (isMarker(kinds[index + 1]) ||
+        (kinds[index + 1] === RAW && ESCAPABLE.test(values[index + 1]))) &&
+      end > start &&
+      isEscaped(value, end)
     ) {
-      const at = spoiled[next] - base;
-      markdown += value.slice(from, at) + toCharacterReference(value[at]);
-      from = at + 1;
+      end--;
     }
-    markdown +=
-      value.slice(from, end) +
-      toReferences(value.slice(end, end + escapesEnd[index])) +
-      toReferences(value.slice(end + escapesEnd[index]));
-    base += value.length;
+    isReference.fill(1, base, base + start);
+    isReference.fill(1, base + end, (base += value.length));
   }
-  return markdown;
+  spoilLinks(kinds, values, isReference);
+  let markdown = '';
+  let from = 0;
+  for (
+    let at = isReference.indexOf(1);
+    at !== -1;
+    at = isReference.indexOf(1, from)
+  ) {
+    const character = characterAt(text, at)!;
+    markdown += text.slice(from, at) + toCharacterReference(character);
+    from = at + character.length;
+  }
+  return markdown + text.slice(from);
 }
 
 // What a backslash before it escapes: ASCII punctuation or a line ending.
 const ESCAPABLE = /^[!-/:-@[-`{-~\n\r]/;
-
-// The character in `value`, if any, as a reference.
-function toReferences(value: string): string {
-  return value === '' ? '' : toCharacterReference(value);
-}
 
 /**
  * Raw output as the bare-URL scan sees it. It keeps whitespace and `<`, which
@@ -880,52 +860,35 @@ function maskRaw(value: string): string {
  * text. Such a URL is spoiled instead, by writing the `.` of `www.` or the
  * `:` after its scheme as a reference, so that no reader links it and its
  * text and formats come through. So is a URL that a reference before it
- * would start. `markReferences` is given each text piece and a function that
- * marks the code units of it, from one offset to another, that go out as
- * references. Returns, in order, the code units of the joined text to write
- * as references, each in a text piece.
+ * would start. `isReference` marks the code units of the joined text that go
+ * out as references, and the ones that spoil a link are marked in it too.
  */
-function findSpoiledLinks(
+function spoilLinks(
   kinds: PieceKind[],
   values: string[],
-  markReferences: (
-    index: number,
-    mark: (from: number, to: number) => void,
-  ) => void,
-): number[] {
+  isReference: Uint8Array,
+): void {
   // Every URL and email starts with one of these.
   if (!values.some((value, i) => kinds[i] === TEXT && LINKISH.test(value))) {
-    return [];
+    return;
   }
   let text = '';
-  const starts = new Uint32Array(values.length + 1);
+  // Whether each code unit is not text, as `1`.
+  let isFormat = '';
   for (let i = 0; i < values.length; i++) {
-    starts[i] = text.length;
     text += kinds[i] === RAW ? maskRaw(values[i]) : values[i];
-  }
-  starts[values.length] = text.length;
-  const isReference = new Uint8Array(text.length);
-  for (let i = 0; i < values.length; i++) {
-    if (kinds[i] === TEXT) {
-      markReferences(i, (from, to) =>
-        isReference.fill(1, starts[i] + from, starts[i] + to),
-      );
-    }
+    isFormat += (kinds[i] === TEXT ? '0' : '1').repeat(values[i].length);
   }
   // Running counts of referenced code units and of code units that are not
   // text, so that whether any lie in a span is a subtraction.
   const references = new Uint32Array(text.length + 1);
   const formats = new Uint32Array(text.length + 1);
-  for (let i = 0, piece = 0; i < text.length; i++) {
-    while (starts[piece + 1] <= i) {
-      piece++;
-    }
+  for (let i = 0; i < text.length; i++) {
     references[i + 1] = references[i] + isReference[i];
-    formats[i + 1] = formats[i] + Number(kinds[piece] !== TEXT);
+    formats[i + 1] = formats[i] + Number(isFormat[i] === '1');
   }
   const has = (sums: Uint32Array, from: number, to: number) =>
     from < to && sums[to] > sums[from];
-  const spoiled: number[] = [];
   // A reference in an email would cut a micromark reader's link short, so
   // each `@` of one that holds a reference is spoiled.
   const spoilEmails = (from: number, to: number) => {
@@ -943,10 +906,10 @@ function findSpoiledLinks(
           if (
             text[i] === '@' &&
             !isReference[i] &&
-            !has(formats, i, i + 1) &&
+            isFormat[i] === '0' &&
             !isEscaped(text, i)
           ) {
-            spoiled.push(i);
+            isReference[i] = 1;
           }
         }
       }
@@ -987,15 +950,10 @@ function findSpoiledLinks(
       // there.
       const before = at > start ? text[at - 1] : '';
       const wasLink = at === start || startsLink(prefix[0], before);
-      const isLink =
-        at === start ||
-        startsLink(
-          prefix[0],
-          isReference[at - 1] || spoiled[spoiled.length - 1] === at - 1
-            ? ';'
-            : before,
-        );
-      if (!isLink) {
+      if (
+        at > start &&
+        !startsLink(prefix[0], isReference[at - 1] ? ';' : before)
+      ) {
         continue;
       }
       spoilEmails(rest, at);
@@ -1007,18 +965,17 @@ function findSpoiledLinks(
       // is a custom format's marker is left as it is.
       const spoil = at + prefix[0].search(/[.:]/);
       if (!has(references, at, at + prefix[0].length)) {
-        if (has(formats, spoil, spoil + 1)) {
+        if (isFormat[spoil] === '1') {
           rest = end;
           break;
         }
-        spoiled.push(spoil);
+        isReference[spoil] = 1;
       }
       rest = at + prefix[0].length;
     }
     spoilEmails(rest, end);
     start = end;
   }
-  return spoiled;
 }
 
 /**
@@ -1055,64 +1012,38 @@ function scanDelimiterRun(
 }
 
 /**
- * Marks the text pieces whose first or last character has to go out as a
- * reference for the marker run beside it to open or close.
+ * Marks the text pieces whose first (in the first array) or last character
+ * has to go out as a reference for the marker run beside it to open or close.
  */
 function decideReferences(
   kinds: PieceKind[],
   values: string[],
-): {
-  encodeStart: Uint8Array;
-  encodeEnd: Uint8Array;
-} {
+): [Uint8Array, Uint8Array] {
   const count = kinds.length;
   const encodeStart = new Uint8Array(count);
   const encodeEnd = new Uint8Array(count);
   const runs: MarkerRun[] = [];
-  // The run that follows and the run that precedes each piece, or -1.
+  // The run that follows and the run that precedes each piece, or -1. (A
+  // typed array ignores a write out of its bounds.)
   const runAfter = new Int32Array(count).fill(-1);
   const runBefore = new Int32Array(count).fill(-1);
   for (let start = 0; start < count; start++) {
-    if (!isMarker(kinds[start])) {
-      continue;
+    if (isMarker(kinds[start])) {
+      let end = start;
+      while (isMarker(kinds[end + 1])) {
+        end++;
+      }
+      runAfter[start - 1] = runBefore[end + 1] = runs.length;
+      // Markers of one character form one delimiter run, and only the first
+      // and the last delimiter run touch text.
+      runs.push([
+        start - 1,
+        end + 1,
+        ...scanDelimiterRun(kinds, values, start, end, 1, OPENER),
+        ...scanDelimiterRun(kinds, values, end, start, -1, CLOSER),
+      ]);
+      start = end;
     }
-    let end = start;
-    while (isMarker(kinds[end + 1])) {
-      end++;
-    }
-    // Markers of one character form one delimiter run, and only the first
-    // and the last delimiter run touch text.
-    const [opens, afterFirst] = scanDelimiterRun(
-      kinds,
-      values,
-      start,
-      end,
-      1,
-      OPENER,
-    );
-    const [closes, beforeLast] = scanDelimiterRun(
-      kinds,
-      values,
-      end,
-      start,
-      -1,
-      CLOSER,
-    );
-    if (start > 0) {
-      runAfter[start - 1] = runs.length;
-    }
-    if (end + 1 < count) {
-      runBefore[end + 1] = runs.length;
-    }
-    runs.push({
-      after: end + 1,
-      afterFirst,
-      before: start - 1,
-      beforeLast,
-      closes,
-      opens,
-    });
-    start = end;
   }
   const firstChar = (index: number) => characterAt(values[index], 0)!;
   const lastChar = (index: number) =>
@@ -1138,8 +1069,6 @@ function decideReferences(
   // Whether the last (or first) character of the piece at `index` can go out
   // as a reference.
   const canReference = (index: number, atEnd: boolean): boolean =>
-    index >= 0 &&
-    index < count &&
     kinds[index] === TEXT &&
     isReferenceable(atEnd ? endChar(index) : startChar(index));
   // Writing a one-character piece as a reference makes its other edge
@@ -1157,12 +1086,12 @@ function decideReferences(
   // 0 while unknown, then 1 when it spreads and 2 when it is blocked.
   const spreads = [new Uint8Array(count), new Uint8Array(count)];
   const canSpread = (index: number, leftward: boolean): boolean => {
-    const side = leftward ? 0 : 1;
+    const known = spreads[Number(leftward)];
     const visited: number[] = [];
     let result = true;
     for (let piece = index; ; ) {
-      if (spreads[side][piece] !== 0) {
-        result = spreads[side][piece] === 1;
+      if (known[piece] !== 0) {
+        result = known[piece] === 1;
         break;
       }
       visited.push(piece);
@@ -1170,14 +1099,19 @@ function decideReferences(
       if (runIndex === -1) {
         break;
       }
-      const run = runs[runIndex];
+      const [before, after, opens, afterFirst, closes, beforeLast] =
+        runs[runIndex];
+      const next = leftward ? before : after;
       // Only a run of a single delimiter character touches both pieces.
-      const isAffected = leftward
-        ? run.opens && run.afterFirst === undefined
-        : run.closes && run.beforeLast === undefined;
-      const next = leftward ? run.before : run.after;
-      const char = leftward ? endChar(next) : startChar(next);
-      if (!isAffected || isPortablyFlankedBy(leftward ? '&' : ';', char)) {
+      if (
+        !(leftward
+          ? opens && afterFirst === undefined
+          : closes && beforeLast === undefined) ||
+        isPortablyFlankedBy(
+          leftward ? '&' : ';',
+          leftward ? endChar(next) : startChar(next),
+        )
+      ) {
         break;
       }
       if (!canReference(next, leftward)) {
@@ -1190,44 +1124,36 @@ function decideReferences(
       piece = next;
     }
     for (const piece of visited) {
-      spreads[side][piece] = result ? 1 : 2;
+      known[piece] = result ? 1 : 2;
     }
     return result;
   };
-  const isFree = (index: number, leftward: boolean) =>
-    !isOneCharacter(index) || canSpread(index, leftward);
-  // A reference helps only where the run could open (or close) if the
-  // character beside it were punctuation. `_` between two letters cannot.
-  const opensWithReference = ({
-    opens,
-    before,
-    after,
-    afterFirst,
-  }: MarkerRun) => {
-    if (!opens) {
+  // Whether a reference beside the run, before it when `opening` and after it
+  // otherwise, lets its first delimiter run open (or its last close) where it
+  // could not, and whether that reference can be written. `_` between two
+  // letters cannot open either way.
+  const isHelpedBy = (
+    [before, after, opens, afterFirst, closes, beforeLast]: MarkerRun,
+    opening: boolean,
+  ): boolean => {
+    const piece = opening ? before : after;
+    if (!(opening ? opens : closes) || !canReference(piece, opening)) {
       return false;
     }
-    const marker = values[before + 1][0];
-    const next = afterFirst || startChar(after);
+    const side = opening ? 'canOpen' : 'canClose';
+    const marker = opening
+      ? values[before + 1][0]
+      : values[after - 1][values[after - 1].length - 1];
+    const previous = (!opening && beforeLast) || endChar(before);
+    const next = (opening && afterFirst) || startChar(after);
     return (
-      !getPortableEmphasisSides(marker, endChar(before), next).canOpen &&
-      getPortableEmphasisSides(marker, ';', next).canOpen
-    );
-  };
-  const closesWithReference = ({
-    closes,
-    before,
-    after,
-    beforeLast,
-  }: MarkerRun) => {
-    if (!closes) {
-      return false;
-    }
-    const marker = values[after - 1][values[after - 1].length - 1];
-    const previous = beforeLast || endChar(before);
-    return (
-      !getPortableEmphasisSides(marker, previous, startChar(after)).canClose &&
-      getPortableEmphasisSides(marker, previous, '&').canClose
+      !getPortableEmphasisSides(marker, previous, next)[side] &&
+      getPortableEmphasisSides(
+        marker,
+        opening ? ';' : previous,
+        opening ? next : '&',
+      )[side] &&
+      (!isOneCharacter(piece) || canSpread(piece, opening))
     );
   };
   // Text does not escape every tag character (the `=` of `==`, say), and one
@@ -1258,26 +1184,18 @@ function decideReferences(
   while (pending.length > 0) {
     const index = pending.pop()!;
     const run = runs[index];
-    const {before, after} = run;
-    if (
-      opensWithReference(run) &&
-      canReference(before, true) &&
-      isFree(before, true)
-    ) {
+    const [before, after, opens, afterFirst] = run;
+    if (isHelpedBy(run, true)) {
       encodeEnd[before] = 1;
       if (isEncoded(before) && runBefore[before] !== -1) {
         pending.push(runBefore[before]);
       }
     }
-    if (
-      closesWithReference(run) &&
-      canReference(after, false) &&
-      isFree(after, false)
-    ) {
+    if (isHelpedBy(run, false)) {
       encodeStart[after] = 1;
       // An opener that sees the same character, of a run that both closes
       // and opens, may now need its own reference.
-      if (run.opens && run.afterFirst === undefined) {
+      if (opens && afterFirst === undefined) {
         pending.push(index);
       }
       if (isEncoded(after) && runAfter[after] !== -1) {
@@ -1285,7 +1203,7 @@ function decideReferences(
       }
     }
   }
-  return {encodeEnd, encodeStart};
+  return [encodeStart, encodeEnd];
 }
 
 /**
